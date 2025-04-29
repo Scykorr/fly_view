@@ -1,94 +1,106 @@
-import tkinter as tk
-from PIL import Image, ImageTk
-from pynput import mouse, keyboard as pykeyboard
-import threading
+import sys
+import keyboard
+import pyautogui
+from PySide6 import QtWidgets, QtGui, QtCore
+# from PySide6.QtWidgets import QApplication, QLabel, QWidget
+from PySide6.QtCore import Qt, QTimer, QObject, Slot, QMetaObject
+
 
 # Путь к вашей картинке
-IMAGE_PATH = "image.png"  # Замените на свой путь
+IMAGE_PATH = r"marker.png"
 
-# Флаг, чтобы избежать множественного открытия окон
-image_shown = False
+last_window = None
 
 
-def show_image():
-    global image_shown
-    if image_shown:
+def show_image_at_mouse():
+    global last_window
+
+    x, y = pyautogui.position()
+
+    app = QtWidgets.QApplication.instance()
+    if not app:
         return
-    image_shown = True
 
-    root = tk.Tk()
-    root.title("Image Overlay")
+    if last_window:
+        last_window.close()
+        last_window = None
 
-    # Открытие и изменение размера изображения (если нужно)
-    img = Image.open(IMAGE_PATH)
-    # img = img.resize((400, 300))  # Можно изменить размер
-    photo = ImageTk.PhotoImage(img)
+    window = QtWidgets.QWidget()
+    window.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+    window.setAttribute(Qt.WA_TranslucentBackground)
 
-    label = tk.Label(root, image=photo)
-    label.image = photo  # Сохраняем ссылку, чтобы изображение не исчезло
-    label.pack()
+    label = QtWidgets.QLabel(window)
+    pixmap = QtGui.QPixmap(IMAGE_PATH)
 
-    # Настройки окна: поверх всех окон, без рамки
-    root.attributes("-topmost", True)
-    root.overrideredirect(True)  # Без рамки и заголовка
+    if pixmap.isNull():
+        print("❌ Не удалось загрузить изображение")
+        return
 
-    # Центрирование окна
-    screen_width = root.winfo_screenwidth()
-    screen_height = root.winfo_screenheight()
-    window_width = img.width
-    window_height = img.height
-    x = (screen_width // 2) - (window_width // 2)
-    y = (screen_height // 2) - (window_height // 2)
-    root.geometry(f"{window_width}x{window_height}+{x}+{y}")
+    label.setPixmap(pixmap)
+    window.resize(pixmap.size())
 
-    def close_window(event=None):
-        root.destroy()
-        global image_shown
-        image_shown = False
+    screen_width, screen_height = pyautogui.size()
+    pos_x = max(0, min(x - pixmap.width() // 2, screen_width - pixmap.width()))
+    pos_y = max(0, min(y - pixmap.height() // 2, screen_height - pixmap.height()))
 
-    # Закрытие при клике по окну или Esc
-    root.bind("<Escape>", close_window)
-    root.bind("<Button-1>", close_window)
+    window.move(pos_x, pos_y)
 
-    root.mainloop()
+    def close_window():
+        window.close()
+        global last_window
+        last_window = None
 
+    def mouse_event(event):
+        close_window()
 
-# Обработчик нажатий клавиш
-def on_key_press(key):
-    try:
-        if key == pykeyboard.Key.f9:  # Нажата F9
-            show_image()
-    except AttributeError:
-        pass
+    def key_event(event):
+        if event.key() == Qt.Key_Escape:
+            close_window()
+
+    window.mousePressEvent = mouse_event
+    window.keyPressEvent = key_event
+
+    window.show()
+    QtCore.QTimer.singleShot(1000, close_window)  # Автоматическое закрытие через 1 секунды
+
+    last_window = window
 
 
-# Обработчик кликов мыши
-def on_click(x, y, button, pressed):
-    if pressed:  # Только при нажатии (not release)
-        show_image()
+class GlobalHotkeyHandler(QtCore.QObject):
+    @Slot()
+    def on_f2(self):
+        QMetaObject.invokeMethod(self, "show_image", Qt.QueuedConnection)
+
+    @Slot()
+    def show_image(self):
+        show_image_at_mouse()
 
 
-# Запуск листенеров в потоках
-def start_keyboard_listener():
-    with pykeyboard.Listener(on_press=on_key_press) as listener:
-        listener.join()
+def exit_on_esc():
+    print("🚪 Нажата клавиша Esc. Завершение работы.")
+    app = QtWidgets.QApplication.instance()
+    if app:
+        app.quit()
 
 
-def start_mouse_listener():
-    with mouse.Listener(on_click=on_click) as listener:
-        listener.join()
-
-
+# Основной запуск
 if __name__ == "__main__":
-    print("Программа запущена. Нажмите F9 или кликните мышкой, чтобы показать изображение.")
+    app = QtWidgets.QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)  # ⬅️ Вот ключевой момент!
 
-    # Запускаем слушателей в отдельных потоках
-    threading.Thread(target=start_keyboard_listener, daemon=True).start()
-    threading.Thread(target=start_mouse_listener, daemon=True).start()
+    # Создаем и прячем основное окно, чтобы GUI не закрылся сам
+    main_window = QtWidgets.QWidget()
+    main_window.hide()
 
-    # Основной цикл для поддержания работы программы
+    handler = GlobalHotkeyHandler()
+
+    print("🟢 Программа запущена. Нажмите F2 для показа изображения.")
+    print("ℹ️ Нажмите Esc для завершения работы.")
+
+    keyboard.add_hotkey('F2', handler.on_f2)
+    keyboard.add_hotkey('Esc', exit_on_esc)
+
     try:
-        while True:
-            pass
-    except KeyboardInterrupt:
-        print("\nПрограмма остановлена.")
+        sys.exit(app.exec())
+    except Exception as e:
+        print("🔴 Ошибка:", e)
